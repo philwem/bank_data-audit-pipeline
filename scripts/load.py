@@ -2,6 +2,10 @@ import os
 import logging
 import duckdb
 import pandas as pd
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -10,51 +14,46 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-# Path to local DuckDB database file
-DUCKDB_PATH = "analytics.duckdb"
+
+load_dotenv()
+
+logging.basicConfig(
+    filename='pipeline.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+# Connect to MotherDuck if token exists, otherwise fallback to local DuckDB file
+MOTHERDUCK_TOKEN = os.getenv("MOTHERDUCK_TOKEN")
+DATABASE_TARGET = f"md:bank_audit_db?token={MOTHERDUCK_TOKEN}" if MOTHERDUCK_TOKEN else "analytics.duckdb"
 
 
 def load_to_duckdb(df, table_name="dim_bank_directory"):
-    """
-    Persists a cleaned pandas DataFrame directly into DuckDB.
-    Creates table automatically if it doesn't exist, and appends new audit records.
-    """
     logging.info(
-        f"Initiating persistence write to DuckDB database ({DUCKDB_PATH})...")
+        f"Initiating persistence write to target: {DATABASE_TARGET}...")
 
     if df.empty:
-        logging.warning("Load step skipped: Received an empty DataFrame.")
+        logging.warning("Load step skipped: Empty DataFrame.")
         return False
 
     try:
-        # Establish connection to DuckDB file
-        conn = duckdb.connect(DUCKDB_PATH)
-
-        # DuckDB can directly query and register pandas DataFrames in memory
+        conn = duckdb.connect(DATABASE_TARGET)
         conn.register("df_view", df)
 
-        # Create table if not exists, then insert
-        conn.execute(f"""
-            CREATE TABLE IF NOT EXISTS {table_name} AS 
-            SELECT * FROM df_view WHERE 1=0;
-        """)
+        conn.execute(
+            f"CREATE TABLE IF NOT EXISTS {table_name} AS SELECT * FROM df_view WHERE 1=0;")
+        conn.execute(f"INSERT INTO {table_name} SELECT * FROM df_view;")
 
-        conn.execute(f"""
-            INSERT INTO {table_name} 
-            SELECT * FROM df_view;
-        """)
-
-        # Fetch row count for verification
         row_count = conn.execute(
             f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
         conn.close()
 
         logging.info(
-            f"DuckDB Persist Successful: Appended row(s). Total rows in '{table_name}': {row_count}")
+            f"Persistence Successful: Total records in '{table_name}': {row_count}")
         return True
 
     except Exception as e:
-        logging.error(f"DuckDB Persistence Failure: {str(e)}")
+        logging.error(f"Persistence Failure: {str(e)}")
         raise
 
 
@@ -74,7 +73,7 @@ if __name__ == "__main__":
         print("\nData successfully persisted into DuckDB: 'analytics.duckdb'")
 
         # Query database back using DuckDB SQL
-        conn = duckdb.connect(DUCKDB_PATH)
+        conn = duckdb.connect(DATABASE_TARGET)
         result_df = conn.execute(
             "SELECT iban, bank_name, bic_swift, processed_at FROM dim_bank_directory").df()
         print("\nDuckDB Query Result:")

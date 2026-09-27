@@ -18,7 +18,7 @@ Traditional payment processing pipelines often fail at scale because:
 2. **Heavy Row-Oriented Storage Overhead:** Storing transaction validation records in traditional row-based engines (like SQLite or PostgreSQL) introduces significant I/O latency when running aggregate analytical audits across millions of payment records.
 3. **Lack of Telemetry & PII Leakage:** Unmasked sensitive customer identifiers (account numbers, IBANs) written directly to unencrypted system logs violate data protection regulations (GDPR/PCI-DSS).
 
-**The Solution:** A decoupled, modular **ETL/ELT Data Pipeline** that automates verification via the APILayer Bank Data API, enforces strict schema assertions in memory using `pandas`, masks PII in execution logs, and persists clean audit records into a local **DuckDB OLAP Lakehouse**.
+**The Solution:** A decoupled, modular **ETL/ELT Data Pipeline** that automates verification via the APILayer Bank Data API, enforces strict schema assertions in memory using `pandas`, maks PII in execution logs, and persists clean audit records into a local **DuckDB OLAP Lakehouse**.
 
 ---
 
@@ -26,30 +26,7 @@ Traditional payment processing pipelines often fail at scale because:
 
 The pipeline follows a modular **Extract-Transform-Load (ETL)** pattern, separating network orchestration, data quality validation, and storage persistence.
 
-┌─────────────────────────┐
-│  APILayer Bank Data API │  (REST API / JSON)
-└────────────┬────────────┘
-│ 1. Extract (HTTP GET + Retries + PII Masking)
-▼
-┌─────────────────────────┐
-│       extract.py        │  (python-dotenv / requests / logging)
-└────────────┬────────────┘
-│ 2. Raw JSON Payload
-▼
-┌─────────────────────────┐
-│       transform.py      │  (Pandas Normalization + Circuit Breakers)
-└────────────┬────────────┘
-│ 3. Normalized DataFrame + Timestamp Metadata
-▼
-┌─────────────────────────┐
-│         load.py         │  (DuckDB Vectorized Storage Engine)
-└────────────┬────────────┘
-│ 4. SQL Persistence
-▼
-┌─────────────────────────┐
-│    analytics.duckdb     │  (Columnar OLAP Data Store)
-└─────────────────────────┘
-
+![PipeLine Execution Flow](/Docs/Pipeline%20Execution%20Flow.png)
 
 ### Architectural Decisions & Tech Stack
 * **Language & Runtime:** Python 3.9+ running inside a isolated virtual environment (`venv`).
@@ -72,26 +49,3 @@ bank-data-audit-pipeline/
 ├── load.py             # DuckDB zero-copy persistence engine
 └── main.py             # Master ETL Pipeline Orchestrator entrypoint
 
-
----
-
-## 4. Code Deep Dive
-
-### A. Ingestion & PII Masking (`extract.py`)
-```python
-def fetch_bank_data(iban_code):
-    url = "[https://api.apilayer.com/bank_data/iban_validate](https://api.apilayer.com/bank_data/iban_validate)"
-    headers = {"apikey": API_KEY}
-    params = {"iban_number": iban_code}
-    
-    # PII Masking: Obfuscate account digits in production logs
-    logging.info(f"Initiating extraction request for IBAN: {iban_code[:4]}****")
-    
-    try:
-        response = requests.get(url, headers=headers, params=params, timeout=30)
-        logging.info(f"API Response Latency: {response.elapsed.total_seconds()}s")
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as req_err:
-        logging.error(f"Network request error occurred: {req_err}")
-        raise
